@@ -11,6 +11,6 @@ TextDefault :: proc(
 		fontId = 0,
 		fontSize = fontSize,
 		textAlignment = alignment,
-		wrapMode = clay.TextWrapMode.Newlines,
+		wrapMode = clay.TextWrapMode.Words,
 	}
 }

@@ -6,9 +6,10 @@ import http "../third_party/odin-http"
 import httpclient "../third_party/odin-http/client"
 import Utils "../utils"
 import "base:runtime"
+import "core:bytes"
 import "core:fmt"
 import "core:strings"
-import "core:text/edit"
+import "core:time"
 import "vendor:raylib"
 
 URL_MAX_LEN :: 1024
@@ -22,6 +23,7 @@ builder: strings.Builder
 globalCtx: runtime.Context
 responseState: ResponseState
 showOtherMethods: bool = false
+scrollOffset: clay.Vector2 = {0, 0}
 
 buttonColors: [5]clay.Color
 
@@ -59,7 +61,22 @@ OnSendRequestButtonClick :: proc "c" (
 	}
 	context = globalCtx
 	clear(&responseState.bodyBuffer.buf)
-	res, err := httpclient.get(uriText)
+
+	request := httpclient.Request {
+		method  = responseState.currentMethod,
+		headers = {},
+	}
+
+	if responseState.currentMethod == http.Method.Post {
+		buff: bytes.Buffer
+		bytes.buffer_init(&buff, responseState.currentBody[:])
+		request.body = buff
+	}
+
+	defer httpclient.request_destroy(&request)
+	startTime: time.Time = time.now()
+	res, err := httpclient.request(&request, uriText)
+	responseState.lastResponseElapsedTime = time.since(startTime)
 	defer httpclient.response_destroy(&res)
 
 	if (err != nil) {
@@ -78,6 +95,7 @@ OnSendRequestButtonClick :: proc "c" (
 
 	responseState.statusCode = res.status
 	body, alloc, bodyErr := httpclient.response_body(&res)
+	defer httpclient.body_destroy(body, alloc)
 	if (bodyErr != nil) {
 		return
 	}
@@ -193,28 +211,54 @@ DrawRightPanel :: proc() {
 		backgroundColor = responseState.responseStatusColor,
 	}
 
+
+	mouseScroll := clay.Vector2{raylib.GetMouseWheelMoveV().x, raylib.GetMouseWheelMoveV().y}
+	// scrollOffset := clay.GetScrollOffset()
+	SCROLL_TIME :: 2 * 1e3
+	scrollOffset.y = min(scrollOffset.y + mouseScroll.y * raylib.GetFrameTime() * SCROLL_TIME, 0.0)
+	// fmt.printfln("Scroll offset %.2f, %.2f", scrollOffset.x, scrollOffset.y)
+
 	bodyView := clay.ElementDeclaration {
-		layout = {sizing = {width = clay.SizingFit({})}},
+		layout = {sizing = {width = clay.SizingGrow({}), height = clay.SizingGrow({})}},
+		clip = {horizontal = true, childOffset = scrollOffset},
 		border = {width = clay.BorderAll(2), color = Utils.COLOR_BLACK()},
 	}
 
 	// TODO: provide contextual allocator for stack memory
 	str := fmt.aprintf("Response: %d", responseState.statusCode)
+
+	elapsedStr := fmt.aprintf("Roundtrip: %v", responseState.lastResponseElapsedTime)
+	defer delete_string(elapsedStr)
 	defer delete_string(str)
 
 	if clay.UI(clay.ID("RightCenterPanel"))(panelElement) {
-		if clay.UI()(statusButton) {
-			clay.TextDynamic(
-				str,
-				clay.TextConfig(
-					Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
-				),
-			)
+		if clay.UI()(
+		{layout = {layoutDirection = clay.LayoutDirection.LeftToRight, childGap = 12}},
+		) {
+			if clay.UI()(statusButton) {
+				clay.TextDynamic(
+					str,
+					clay.TextConfig(
+						Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
+					),
+				)
+			}
+			statusButton.backgroundColor = Utils.COLOR_LIGHT_GRAY()
+			statusButton.border.color = Utils.COLOR_LIGHT_GRAY()
+			if clay.UI()(statusButton) {
+				clay.TextDynamic(
+					elapsedStr,
+					clay.TextConfig(
+						Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
+					),
+				)
+			}
+
 		}
 		if clay.UI()(bodyView) {
 			clay.TextDynamic(
 				strings.to_string(responseState.bodyBuffer),
-				clay.TextConfig(TITLE_CONFIG),
+				clay.TextConfig(Utils.TextDefault(24)),
 			)
 		}
 		// clay.Text("Yooo, from right", clay.TextConfig(TITLE_CONFIG))
