@@ -34,10 +34,11 @@ Init :: proc() {
 	)
 	clay.SetMeasureTextFunction(measure_text, &fonts[0])
 
+	raylib.SetTraceLogLevel(raylib.TraceLogLevel.ERROR)
 	raylib.SetConfigFlags({.VSYNC_HINT, .WINDOW_RESIZABLE, .MSAA_4X_HINT})
 	raylib.InitWindow(windowWidth, windowHeight, "Odin HTTP client")
-	raylib.SetWindowMonitor(1)
-	raylib.SetTargetFPS(raylib.GetMonitorRefreshRate(1))
+	raylib.SetWindowMonitor(0)
+	raylib.SetTargetFPS(raylib.GetMonitorRefreshRate(0))
 
 	LoadResources()
 

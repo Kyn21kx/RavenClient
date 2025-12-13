@@ -104,7 +104,6 @@ OnSendRequestButtonClick :: proc "c" (
 
 	responseState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
 	strings.write_string(&responseState.bodyBuffer, body.(httpclient.Body_Plain))
-	fmt.println(strings.to_string(responseState.bodyBuffer))
 
 }
 
