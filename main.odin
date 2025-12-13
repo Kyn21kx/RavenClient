@@ -53,9 +53,11 @@ Update :: proc() {
 		transmute(clay.Vector2)raylib.GetMousePosition(),
 		raylib.IsMouseButtonDown(raylib.MouseButton.LEFT),
 	)
+	mouseWheelMoveV := raylib.GetMouseWheelMoveV() * 5
+	// fmt.println(mouseWheelMoveV)
 	clay.UpdateScrollContainers(
-		false,
-		transmute(clay.Vector2)raylib.GetMouseWheelMoveV(),
+		true,
+		transmute(clay.Vector2)mouseWheelMoveV,
 		raylib.GetFrameTime(),
 	)
 	clay.SetLayoutDimensions({cast(f32)raylib.GetScreenWidth(), cast(f32)raylib.GetScreenHeight()})
@@ -63,7 +65,7 @@ Update :: proc() {
 	clay.BeginLayout()
 	raylib.BeginDrawing()
 
-	raylib.ClearBackground(raylib.DARKGRAY)
+	raylib.ClearBackground(raylib.Color{15, 12, 18, 255})
 
 
 	if clay.UI()(

@@ -12,7 +12,9 @@ import "core:strings"
 import "core:time"
 import "vendor:raylib"
 
-URL_MAX_LEN :: 1024
+SIZE_KB :: 1024
+SIZE_MB :: 1024 * SIZE_KB
+URL_MAX_LEN :: SIZE_KB
 DEFAULT_PADDING :: 16
 TITLE_CONFIG: clay.TextElementConfig
 SIZE_AUTO_GROW_XY: clay.Sizing
@@ -36,7 +38,7 @@ ButtonType :: enum {
 
 Init :: proc() {
 	TITLE_CONFIG = {
-		fontSize  = 48,
+		fontSize  = 24,
 		textColor = Utils.COLOR_WHITE(),
 	}
 	buttonColors = {
@@ -100,7 +102,9 @@ OnSendRequestButtonClick :: proc "c" (
 		return
 	}
 
+	responseState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
 	strings.write_string(&responseState.bodyBuffer, body.(httpclient.Body_Plain))
+	fmt.println(strings.to_string(responseState.bodyBuffer))
 
 }
 
@@ -198,7 +202,7 @@ DrawTopHeader :: proc() {
 DrawRightPanel :: proc() {
 	panelElement := clay.ElementDeclaration {
 		layout = {
-			sizing = Utils.SizeFlexHorizontal(1),
+			sizing = {width = clay.SizingGrow({min = 1}), height = clay.SizingPercent(1)},
 			layoutDirection = clay.LayoutDirection.TopToBottom,
 			padding = clay.PaddingAll(DEFAULT_PADDING),
 			childGap = 48,
@@ -213,23 +217,35 @@ DrawRightPanel :: proc() {
 
 
 	mouseScroll := clay.Vector2{raylib.GetMouseWheelMoveV().x, raylib.GetMouseWheelMoveV().y}
-	// scrollOffset := clay.GetScrollOffset()
-	SCROLL_TIME :: 2 * 1e3
-	scrollOffset.y = min(scrollOffset.y + mouseScroll.y * raylib.GetFrameTime() * SCROLL_TIME, 0.0)
-	// fmt.printfln("Scroll offset %.2f, %.2f", scrollOffset.x, scrollOffset.y)
+	// This one doesn't work, idk why
 
-	bodyView := clay.ElementDeclaration {
-		layout = {sizing = {width = clay.SizingGrow({}), height = clay.SizingGrow({})}},
-		clip = {horizontal = true, childOffset = scrollOffset},
-		border = {width = clay.BorderAll(2), color = Utils.COLOR_BLACK()},
+	bodyViewLayout := clay.LayoutConfig {
+		sizing = {width = clay.SizingGrow({}), height = clay.SizingPercent(1)},
+	}
+	bodyViewBorder := clay.BorderElementConfig {
+		width = clay.BorderAll(2),
+		color = Utils.COLOR_BLACK(),
 	}
 
 	// TODO: provide contextual allocator for stack memory
 	str := fmt.aprintf("Response: %d", responseState.statusCode)
-
 	elapsedStr := fmt.aprintf("Roundtrip: %v", responseState.lastResponseElapsedTime)
+	sizeStr: string
+	// We can probably do this in a smarter way, but I've been coding for a while now lol
+	if (responseState.responseBodySize < SIZE_KB) {
+		sizeStr = fmt.aprintf("Content Size: %vB", responseState.responseBodySize)
+	} else if (responseState.responseBodySize < SIZE_MB) {
+		sizeStr = fmt.aprintf(
+			"Content Size: %vkB",
+			cast(f32)responseState.responseBodySize / SIZE_KB,
+		)
+	} else {
+		sizeStr = fmt.aprintf("Content Size: %MB", responseState.responseBodySize / SIZE_MB)
+
+	}
 	defer delete_string(elapsedStr)
 	defer delete_string(str)
+	defer delete_string(sizeStr)
 
 	if clay.UI(clay.ID("RightCenterPanel"))(panelElement) {
 		if clay.UI()(
@@ -243,8 +259,8 @@ DrawRightPanel :: proc() {
 					),
 				)
 			}
-			statusButton.backgroundColor = Utils.COLOR_LIGHT_GRAY()
-			statusButton.border.color = Utils.COLOR_LIGHT_GRAY()
+			statusButton.backgroundColor = Utils.COLOR_GRAY()
+			statusButton.border.color = Utils.COLOR_GRAY()
 			if clay.UI()(statusButton) {
 				clay.TextDynamic(
 					elapsedStr,
@@ -253,9 +269,23 @@ DrawRightPanel :: proc() {
 					),
 				)
 			}
+			if clay.UI()(statusButton) {
+				clay.TextDynamic(
+					sizeStr,
+					clay.TextConfig(
+						Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
+					),
+				)
+			}
 
 		}
-		if clay.UI()(bodyView) {
+		if clay.UI()(
+		{
+			layout = bodyViewLayout,
+			border = bodyViewBorder,
+			clip = {vertical = true, childOffset = clay.GetScrollOffset()},
+		},
+		) {
 			clay.TextDynamic(
 				strings.to_string(responseState.bodyBuffer),
 				clay.TextConfig(Utils.TextDefault(24)),

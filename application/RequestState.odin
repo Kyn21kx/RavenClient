@@ -16,6 +16,7 @@ ResponseState :: struct {
 	lastResponseElapsedTime: time.Duration,
 	currentMethod:           http.Method,
 	currentBody:             [BODY_CAPACITY]byte,
+	responseBodySize:        i32,
 }
 
 InitResponseState :: proc(responseState: ^ResponseState) {
