@@ -1,0 +1,16 @@
+// raddbg 0.9.19 project file
+
+recent_file: path: "main.odin"
+recent_file: path: "application/ClientUI.odin"
+recent_file: path: "clayrendererraylib.odin"
+target:
+{
+  executable: "OdinClient.exe"
+  working_directory: ""
+  enabled: 1
+}
+breakpoint:
+{
+  source_location: "main.odin:16:1"
+  hit_count: 1
+}

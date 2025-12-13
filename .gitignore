@@ -1,0 +1,55 @@
+# Executables
+*.exe
+*.out
+*.app
+*.dll
+*.so
+*.dylib
+
+# Odin specific
+*.rdi
+*.pdb
+
+# Build artifacts
+build/
+dist/
+target/
+bin/
+obj/
+
+# Cache directories
+.cache/
+cache/
+*.cache
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Profiling data
+*.prof
+*.pprof
+
+# Test coverage
+*.coverage
+*.cover
+
+# Lock files (keep package files)
+*.lock
