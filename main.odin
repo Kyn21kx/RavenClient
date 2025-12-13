@@ -37,8 +37,8 @@ Init :: proc() {
 	raylib.SetTraceLogLevel(raylib.TraceLogLevel.ERROR)
 	raylib.SetConfigFlags({.VSYNC_HINT, .WINDOW_RESIZABLE, .MSAA_4X_HINT})
 	raylib.InitWindow(windowWidth, windowHeight, "Odin HTTP client")
-	raylib.SetWindowMonitor(0)
-	raylib.SetTargetFPS(raylib.GetMonitorRefreshRate(0))
+	raylib.SetWindowMonitor(1)
+	raylib.SetTargetFPS(raylib.GetMonitorRefreshRate(1))
 
 	LoadResources()
 

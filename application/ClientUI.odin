@@ -20,12 +20,13 @@ TITLE_CONFIG: clay.TextElementConfig
 SIZE_AUTO_GROW_XY: clay.Sizing
 EXAMPLE_URI :: "https://example.com/api/endpoint"
 
-uriText: string = ""
 builder: strings.Builder
 globalCtx: runtime.Context
 responseState: ResponseState
 showOtherMethods: bool = false
 scrollOffset: clay.Vector2 = {0, 0}
+urlTextBoxInfo: Components.TextBoxInfo
+requestBodyTextBoxInfo: Components.TextBoxInfo
 
 buttonColors: [5]clay.Color
 
@@ -49,7 +50,13 @@ Init :: proc() {
 		Utils.COLOR_BRONZE(),
 	}
 	InitResponseState(&responseState)
-	strings.builder_init_len_cap(&builder, 0, URL_MAX_LEN)
+	urlTextBoxInfo = Components.DefaultTextBoxInfo(URL_MAX_LEN, EXAMPLE_URI)
+	urlTextBoxInfo.sizing = {
+		width = clay.SizingGrow(),
+		height = {type = clay.SizingType.Fit},
+	}
+	// URL textbox focused by default
+	urlTextBoxInfo.isFocused = true
 	globalCtx = runtime.default_context()
 }
 
@@ -77,7 +84,7 @@ OnSendRequestButtonClick :: proc "c" (
 
 	defer httpclient.request_destroy(&request)
 	startTime: time.Time = time.now()
-	res, err := httpclient.request(&request, uriText)
+	res, err := httpclient.request(&request, strings.to_string(urlTextBoxInfo.textBuilder))
 	responseState.lastResponseElapsedTime = time.since(startTime)
 	defer httpclient.response_destroy(&res)
 
@@ -184,16 +191,7 @@ DrawTopHeader :: proc() {
 			}
 
 		}
-		if clay.UI(clay.ID("URLBox"))({layout = urlBoxLayout}) {
-			count := len(uriText)
-			sendReqButton.disable = count <= 0
-			currentUriText: string = count > 0 ? uriText : EXAMPLE_URI
-			textColor := count > 0 ? Utils.COLOR_WHITE() : Utils.COLOR_WHITE(100)
-			clay.TextDynamic(
-				currentUriText,
-				clay.TextConfig(Utils.TextDefault(TITLE_CONFIG.fontSize, textColor)),
-			)
-		}
+		Components.TextBox(clay.ID("URLBox"), &urlTextBoxInfo)
 		Components.HeaderButton("Send Request", &sendReqButton)
 	}
 }
@@ -294,6 +292,18 @@ DrawRightPanel :: proc() {
 	}
 }
 
+DrawLeftPanel :: proc() {
+	leftPanelLayout := clay.LayoutConfig {
+		layoutDirection = clay.LayoutDirection.TopToBottom,
+		sizing = {width = clay.SizingFit()},
+	}
+
+	if clay.UI(clay.ID("LeftCenterPanel"))({layout = leftPanelLayout}) {
+		clay.Text("Request Headers", clay.TextConfig(TITLE_CONFIG))
+		clay.Text("Request Body", clay.TextConfig(TITLE_CONFIG))
+	}
+}
+
 DrawUI :: proc() {
 	centerPanelLayout := clay.LayoutConfig {
 		padding = clay.PaddingAll(DEFAULT_PADDING),
@@ -306,50 +316,15 @@ DrawUI :: proc() {
 		border = {width = clay.BorderAll(2), color = Utils.COLOR_BLACK()},
 	}
 
-	leftPanelLayout := clay.LayoutConfig {
-		layoutDirection = clay.LayoutDirection.TopToBottom,
-		sizing = {width = clay.SizingFit()},
-	}
 	DrawTopHeader()
 
 	if clay.UI(clay.ID("CenterPanel"))(centerPanelElement) {
-		if clay.UI(clay.ID("LeftCenterPanel"))({layout = leftPanelLayout}) {
-			clay.Text("Request Headers", clay.TextConfig(TITLE_CONFIG))
-			clay.Text("Request Body", clay.TextConfig(TITLE_CONFIG))
-		}
+		DrawLeftPanel()
 		DrawRightPanel()
 	}
 }
 
-HandleInput :: proc() {
-	c: rune = raylib.GetCharPressed()
-	if (c > 0) {
-		strings.write_rune(&builder, c)
-	}
-
-	isCtrlPressed: bool =
-		(raylib.IsKeyDown(raylib.KeyboardKey.LEFT_CONTROL) ||
-			raylib.IsKeyDown(raylib.KeyboardKey.RIGHT_CONTROL))
-
-	pasted: bool = isCtrlPressed && raylib.IsKeyPressed(raylib.KeyboardKey.V)
-
-	if (pasted) {
-		// Attempt to read the clipboard
-		clipboardCStr := raylib.GetClipboardText()
-		if (clipboardCStr == nil) {
-			return
-		}
-		strings.write_string(&builder, string(clipboardCStr))
-	}
-
-	if (raylib.IsKeyPressed(raylib.KeyboardKey.BACKSPACE) ||
-		   raylib.IsKeyPressedRepeat(raylib.KeyboardKey.BACKSPACE)) {
-		strings.pop_rune(&builder)
-	}
-	uriText = strings.to_string(builder)
-}
-
 Update :: proc() {
-	HandleInput()
+	// HandleInput()
 	DrawUI()
 }

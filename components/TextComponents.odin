@@ -2,12 +2,85 @@ package Components
 
 import clay "../third_party/clay"
 import Utils "../utils"
+import "core:strings"
+import "vendor:raylib"
+
+MID_TEXT_SIZE :: 24
 
 TextBoxInfo :: struct {
 	placeholderText:  string,
 	placeholderColor: clay.Color,
+	sizing:           clay.Sizing,
+	textBuilder:      strings.Builder,
+	outIsPlaceholder: bool,
+	isFocused:        bool,
+	fontSize:         u16,
+	textColor:        clay.Color,
 }
 
+DefaultTextBoxInfo :: proc(capacity: int, placeholder: string) -> TextBoxInfo {
+	builder: strings.Builder
+	strings.builder_init_len_cap(&builder, 0, capacity)
+	return {
+		placeholderColor = Utils.COLOR_WHITE(100),
+		fontSize = MID_TEXT_SIZE,
+		textColor = Utils.COLOR_WHITE(),
+		textBuilder = builder,
+		placeholderText = placeholder,
+	}
+}
+
+
+TextHandleInput :: proc(builder: ^strings.Builder) {
+	c: rune = raylib.GetCharPressed()
+	if (c > 0) {
+		strings.write_rune(builder, c)
+	}
+
+	isCtrlPressed: bool =
+		(raylib.IsKeyDown(raylib.KeyboardKey.LEFT_CONTROL) ||
+			raylib.IsKeyDown(raylib.KeyboardKey.RIGHT_CONTROL))
+
+	pasted: bool = isCtrlPressed && raylib.IsKeyPressed(raylib.KeyboardKey.V)
+
+	if (pasted) {
+		// Attempt to read the clipboard
+		clipboardCStr := raylib.GetClipboardText()
+		if (clipboardCStr == nil) {
+			return
+		}
+		strings.write_string(builder, string(clipboardCStr))
+	}
+
+	if (raylib.IsKeyPressed(raylib.KeyboardKey.BACKSPACE) ||
+		   raylib.IsKeyPressedRepeat(raylib.KeyboardKey.BACKSPACE)) {
+		strings.pop_rune(builder)
+	}
+}
+
+TextBox :: proc(id: clay.ElementId, info: ^TextBoxInfo) {
+	if (info.isFocused) {
+		TextHandleInput(&info.textBuilder)
+	}
+
+	textBoxLayout := clay.LayoutConfig {
+		layoutDirection = clay.LayoutDirection.LeftToRight,
+		sizing          = info.sizing,
+	}
+	text: string = strings.to_string(info.textBuilder)
+	if clay.UI(id)({layout = textBoxLayout}) {
+		count := len(text)
+		info.outIsPlaceholder = count <= 0
+		// sendReqButton.disable = count <= 0
+		currentUriText: string = !info.outIsPlaceholder ? text : info.placeholderText
+		textColor := count > 0 ? Utils.COLOR_WHITE() : Utils.COLOR_WHITE(100)
+		clay.TextDynamic(
+			currentUriText,
+			clay.TextConfig(Utils.TextDefault(info.fontSize, textColor)),
+		)
+	}
+
+}
 
 OnClickFunc_t :: proc "c" (
 	element_id: clay.ElementId,
