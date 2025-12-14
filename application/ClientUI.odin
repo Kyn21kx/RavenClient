@@ -9,6 +9,8 @@ import "base:runtime"
 import "core:bytes"
 import "core:fmt"
 import "core:strings"
+import "core:sync"
+import "core:thread"
 import "core:time"
 import "vendor:raylib"
 
@@ -16,19 +18,36 @@ SIZE_KB :: 1024
 SIZE_MB :: 1024 * SIZE_KB
 URL_MAX_LEN :: SIZE_KB
 DEFAULT_PADDING :: 16
-TITLE_CONFIG: clay.TextElementConfig
+
+TITLE_CONFIG: clay.TextElementConfig = {
+	fontSize  = 24,
+	textColor = Utils.COLOR_WHITE(),
+}
+
 SIZE_AUTO_GROW_XY: clay.Sizing
 EXAMPLE_URI :: "https://example.com/api/endpoint"
+EXAMPLE_BODY :: "{\n\t\"body\":\"example body as JSON\"\n}"
 
-builder: strings.Builder
 globalCtx: runtime.Context
-responseState: ResponseState
+
+urlBuffer: [URL_MAX_LEN]byte
 showOtherMethods: bool = false
-scrollOffset: clay.Vector2 = {0, 0}
 urlTextBoxInfo: Components.TextBoxInfo
 requestBodyTextBoxInfo: Components.TextBoxInfo
 
-buttonColors: [5]clay.Color
+requestThread: ^thread.Thread = nil
+requestHasWork: bool = false
+requestMutex: sync.Mutex
+requestCond: sync.Cond
+appState: AppState
+
+buttonColors: [5]clay.Color = {
+	Utils.COLOR_PURPLE(),
+	Utils.COLOR_LIGHT_GREEN(),
+	Utils.COLOR_RED(),
+	Utils.COLOR_YELLOW(),
+	Utils.COLOR_BRONZE(),
+}
 
 buttonNames: []string = {"GET", "POST", "DELETE", "PATCH", "PUT"}
 
@@ -38,26 +57,81 @@ ButtonType :: enum {
 }
 
 Init :: proc() {
-	TITLE_CONFIG = {
-		fontSize  = 24,
-		textColor = Utils.COLOR_WHITE(),
-	}
-	buttonColors = {
-		Utils.COLOR_PURPLE(),
-		Utils.COLOR_LIGHT_GREEN(),
-		Utils.COLOR_RED(),
-		Utils.COLOR_YELLOW(),
-		Utils.COLOR_BRONZE(),
-	}
-	InitResponseState(&responseState)
-	urlTextBoxInfo = Components.DefaultTextBoxInfo(URL_MAX_LEN, EXAMPLE_URI)
+	InitResponseState(&appState)
+	urlTextBoxInfo = Components.DefaultTextBoxInfoWithBuffer(urlBuffer[:], EXAMPLE_URI)
 	urlTextBoxInfo.sizing = {
 		width = clay.SizingGrow(),
 		height = {type = clay.SizingType.Fit},
 	}
 	// URL textbox focused by default
 	urlTextBoxInfo.isFocused = true
+	requestBodyTextBoxInfo = Components.DefaultTextBoxInfoWithBuffer(
+		appState.currentBody[:],
+		EXAMPLE_BODY,
+	)
+	requestBodyTextBoxInfo.sizing = {
+		width  = clay.SizingPercent(1),
+		height = clay.SizingGrow({}),
+	}
+	requestBodyTextBoxInfo.borderColor = Utils.COLOR_BLACK()
+	requestBodyTextBoxInfo.borderWidth = 2
+	requestBodyTextBoxInfo.indentOnNewLine = true
+
+	urlTextBoxInfo.cursorColor = buttonColors[cast(i32)appState.currentMethod]
+	requestBodyTextBoxInfo.cursorColor = buttonColors[cast(i32)appState.currentMethod]
+
 	globalCtx = runtime.default_context()
+}
+
+SendRequestWorker :: proc() {
+	for {
+		sync.mutex_lock(&requestMutex)
+		for !requestHasWork {
+			sync.cond_wait(&requestCond, &requestMutex)
+		}
+		fmt.println("Sending request threaded")
+		request := httpclient.Request {
+			method  = appState.currentMethod,
+			headers = {},
+		}
+
+		if appState.currentMethod == http.Method.Post {
+			buff: bytes.Buffer
+			bytes.buffer_init(&buff, appState.currentBody[:])
+			request.body = buff
+		}
+
+		defer httpclient.request_destroy(&request)
+		startTime: time.Time = time.now()
+		res, err := httpclient.request(&request, strings.to_string(urlTextBoxInfo.textBuilder))
+		appState.lastResponseElapsedTime = time.since(startTime)
+		defer httpclient.response_destroy(&res)
+
+		if (err != nil) {
+			// Communicate the error to the user
+			fmt.printfln("Error when sending the request %d", err)
+			return
+		}
+
+		// Update the Response box
+		statusColorOpacity :: 100.0
+		if (res.status >= http.Status.OK && res.status < http.Status.Multiple_Choices) {
+			appState.responseStatusColor = Utils.COLOR_GREEN(statusColorOpacity)
+		} else if (res.status >= http.Status.Bad_Request) {
+			appState.responseStatusColor = Utils.COLOR_RED(statusColorOpacity)
+		}
+
+		appState.statusCode = res.status
+		body, alloc, bodyErr := httpclient.response_body(&res)
+		defer httpclient.body_destroy(body, alloc)
+		if (bodyErr != nil) {
+			return
+		}
+
+		appState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
+		strings.write_string(&appState.bodyBuffer, body.(httpclient.Body_Plain))
+		requestHasWork = false
+	}
 }
 
 OnSendRequestButtonClick :: proc "c" (
@@ -69,49 +143,14 @@ OnSendRequestButtonClick :: proc "c" (
 		return
 	}
 	context = globalCtx
-	clear(&responseState.bodyBuffer.buf)
 
-	request := httpclient.Request {
-		method  = responseState.currentMethod,
-		headers = {},
+	clear(&appState.bodyBuffer.buf)
+	if (requestThread == nil) {
+		requestThread = thread.create_and_start(SendRequestWorker)
 	}
-
-	if responseState.currentMethod == http.Method.Post {
-		buff: bytes.Buffer
-		bytes.buffer_init(&buff, responseState.currentBody[:])
-		request.body = buff
-	}
-
-	defer httpclient.request_destroy(&request)
-	startTime: time.Time = time.now()
-	res, err := httpclient.request(&request, strings.to_string(urlTextBoxInfo.textBuilder))
-	responseState.lastResponseElapsedTime = time.since(startTime)
-	defer httpclient.response_destroy(&res)
-
-	if (err != nil) {
-		// Communicate the error to the user
-		fmt.printfln("Error when sending the request %d", err)
-		return
-	}
-
-	// Update the Response box
-	statusColorOpacity :: 100.0
-	if (res.status >= http.Status.OK && res.status < http.Status.Multiple_Choices) {
-		responseState.responseStatusColor = Utils.COLOR_GREEN(statusColorOpacity)
-	} else if (res.status >= http.Status.Bad_Request) {
-		responseState.responseStatusColor = Utils.COLOR_RED(statusColorOpacity)
-	}
-
-	responseState.statusCode = res.status
-	body, alloc, bodyErr := httpclient.response_body(&res)
-	defer httpclient.body_destroy(body, alloc)
-	if (bodyErr != nil) {
-		return
-	}
-
-	responseState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
-	strings.write_string(&responseState.bodyBuffer, body.(httpclient.Body_Plain))
-
+	requestHasWork = true
+	sync.cond_signal(&requestCond)
+	sync.mutex_unlock(&requestMutex)
 }
 
 OnMethodButtonClick :: proc "c" (
@@ -135,13 +174,15 @@ ShowMethodButtons :: proc() {
 		buttonArgs.bgIdleColor = buttonColors[index]
 		buttonArgs.bgHoverColor = buttonColors[index]
 		buttonArgs.bgHoverColor[3] = 100
-		if (index == cast(int)responseState.currentMethod) {
+		if (index == cast(int)appState.currentMethod) {
 			continue
 		}
 		Components.RawButton(buttonNames[index], buttonArgs, &isHovered)
 		if (isHovered && raylib.IsMouseButtonPressed(raylib.MouseButton.LEFT)) {
-			responseState.currentMethod = cast(http.Method)index
+			appState.currentMethod = cast(http.Method)index
 			showOtherMethods = !showOtherMethods
+			urlTextBoxInfo.cursorColor = buttonColors[index]
+			requestBodyTextBoxInfo.cursorColor = buttonColors[index]
 			return
 		}
 	}
@@ -174,15 +215,15 @@ DrawTopHeader :: proc() {
 
 	if clay.UI(clay.ID("TopHeader"))({layout = topHeaderLayout}) {
 		changeMethodButton := sendReqButton
-		changeMethodButton.bgIdleColor = buttonColors[responseState.currentMethod]
-		changeMethodButton.bgHoverColor = buttonColors[responseState.currentMethod]
+		changeMethodButton.bgIdleColor = buttonColors[appState.currentMethod]
+		changeMethodButton.bgHoverColor = buttonColors[appState.currentMethod]
 		changeMethodButton.borderColor = changeMethodButton.bgIdleColor
 		changeMethodButton.bgHoverColor[3] = 100
 		changeMethodButton.onHover = OnMethodButtonClick
 		isHovered := false
 		if clay.UI()({layout = {layoutDirection = clay.LayoutDirection.TopToBottom}}) {
 			Components.RawButton(
-				buttonNames[responseState.currentMethod],
+				buttonNames[appState.currentMethod],
 				changeMethodButton,
 				&isHovered,
 			)
@@ -192,6 +233,10 @@ DrawTopHeader :: proc() {
 
 		}
 		Components.TextBox(clay.ID("URLBox"), &urlTextBoxInfo)
+		if (urlTextBoxInfo.outWasClicked) {
+			appState.uiFocusState = UIFocus.URLBox
+		}
+		sendReqButton.disable = urlTextBoxInfo.outIsPlaceholder
 		Components.HeaderButton("Send Request", &sendReqButton)
 	}
 }
@@ -208,8 +253,8 @@ DrawRightPanel :: proc() {
 	statusButton := clay.ElementDeclaration {
 		layout = {childAlignment = Utils.LAYOUT_CHILD_ALIGN_CENTER_ALL},
 		cornerRadius = clay.CornerRadiusAll(2),
-		border = {width = clay.BorderAll(2), color = responseState.responseStatusColor},
-		backgroundColor = responseState.responseStatusColor,
+		border = {width = clay.BorderAll(2), color = appState.responseStatusColor},
+		backgroundColor = appState.responseStatusColor,
 	}
 
 
@@ -225,19 +270,16 @@ DrawRightPanel :: proc() {
 	}
 
 	// TODO: provide contextual allocator for stack memory
-	str := fmt.aprintf("Response: %d", responseState.statusCode)
-	elapsedStr := fmt.aprintf("Roundtrip: %v", responseState.lastResponseElapsedTime)
+	str := fmt.aprintf("Response: %d", appState.statusCode)
+	elapsedStr := fmt.aprintf("Roundtrip: %v", appState.lastResponseElapsedTime)
 	sizeStr: string
 	// We can probably do this in a smarter way, but I've been coding for a while now lol
-	if (responseState.responseBodySize < SIZE_KB) {
-		sizeStr = fmt.aprintf("Content Size: %vB", responseState.responseBodySize)
-	} else if (responseState.responseBodySize < SIZE_MB) {
-		sizeStr = fmt.aprintf(
-			"Content Size: %vkB",
-			cast(f32)responseState.responseBodySize / SIZE_KB,
-		)
+	if (appState.responseBodySize < SIZE_KB) {
+		sizeStr = fmt.aprintf("Content Size: %vB", appState.responseBodySize)
+	} else if (appState.responseBodySize < SIZE_MB) {
+		sizeStr = fmt.aprintf("Content Size: %vkB", cast(f32)appState.responseBodySize / SIZE_KB)
 	} else {
-		sizeStr = fmt.aprintf("Content Size: %MB", responseState.responseBodySize / SIZE_MB)
+		sizeStr = fmt.aprintf("Content Size: %MB", appState.responseBodySize / SIZE_MB)
 
 	}
 	defer delete_string(elapsedStr)
@@ -284,7 +326,7 @@ DrawRightPanel :: proc() {
 		},
 		) {
 			clay.TextDynamic(
-				strings.to_string(responseState.bodyBuffer),
+				strings.to_string(appState.bodyBuffer),
 				clay.TextConfig(Utils.TextDefault(24)),
 			)
 		}
@@ -295,12 +337,16 @@ DrawRightPanel :: proc() {
 DrawLeftPanel :: proc() {
 	leftPanelLayout := clay.LayoutConfig {
 		layoutDirection = clay.LayoutDirection.TopToBottom,
-		sizing = {width = clay.SizingFit()},
+		sizing = {width = clay.SizingPercent(0.3)},
 	}
 
 	if clay.UI(clay.ID("LeftCenterPanel"))({layout = leftPanelLayout}) {
 		clay.Text("Request Headers", clay.TextConfig(TITLE_CONFIG))
-		clay.Text("Request Body", clay.TextConfig(TITLE_CONFIG))
+		clay.Text("Body (JSON only)", clay.TextConfig(TITLE_CONFIG))
+		Components.TextBox(clay.ID("RequestBody"), &requestBodyTextBoxInfo)
+		if (requestBodyTextBoxInfo.outWasClicked) {
+			appState.uiFocusState = UIFocus.BodyBox
+		}
 	}
 }
 
@@ -324,7 +370,20 @@ DrawUI :: proc() {
 	}
 }
 
+HandleUIFocus :: proc() {
+	switch appState.uiFocusState {
+	case UIFocus.URLBox:
+		urlTextBoxInfo.isFocused = true
+		requestBodyTextBoxInfo.isFocused = false
+		break
+	case UIFocus.BodyBox:
+		urlTextBoxInfo.isFocused = false
+		requestBodyTextBoxInfo.isFocused = true
+		break
+	}
+}
+
 Update :: proc() {
-	// HandleInput()
+	HandleUIFocus()
 	DrawUI()
 }

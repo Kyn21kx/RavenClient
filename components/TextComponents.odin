@@ -2,6 +2,8 @@ package Components
 
 import clay "../third_party/clay"
 import Utils "../utils"
+import "core:fmt"
+import "core:math"
 import "core:strings"
 import "vendor:raylib"
 
@@ -14,8 +16,13 @@ TextBoxInfo :: struct {
 	textBuilder:      strings.Builder,
 	outIsPlaceholder: bool,
 	isFocused:        bool,
+	outWasClicked:    bool,
 	fontSize:         u16,
 	textColor:        clay.Color,
+	borderWidth:      u16,
+	borderColor:      clay.Color,
+	cursorColor:      clay.Color,
+	indentOnNewLine:  bool,
 }
 
 DefaultTextBoxInfo :: proc(capacity: int, placeholder: string) -> TextBoxInfo {
@@ -25,16 +32,38 @@ DefaultTextBoxInfo :: proc(capacity: int, placeholder: string) -> TextBoxInfo {
 		placeholderColor = Utils.COLOR_WHITE(100),
 		fontSize = MID_TEXT_SIZE,
 		textColor = Utils.COLOR_WHITE(),
+		cursorColor = Utils.COLOR_WHITE(),
 		textBuilder = builder,
 		placeholderText = placeholder,
 	}
 }
 
+DefaultTextBoxInfoWithBuffer :: proc(backing: []byte, placeholder: string) -> TextBoxInfo {
+	return {
+		placeholderColor = Utils.COLOR_WHITE(100),
+		fontSize = MID_TEXT_SIZE,
+		textColor = Utils.COLOR_WHITE(),
+		cursorColor = Utils.COLOR_WHITE(),
+		textBuilder = strings.builder_from_bytes(backing),
+		placeholderText = placeholder,
+	}
+}
 
-TextHandleInput :: proc(builder: ^strings.Builder) {
+
+TextHandleInput :: proc(builder: ^strings.Builder, indentOnNewLine: bool) {
 	c: rune = raylib.GetCharPressed()
 	if (c > 0) {
 		strings.write_rune(builder, c)
+	}
+	if (raylib.IsKeyPressed(raylib.KeyboardKey.ENTER)) {
+		strings.write_rune(builder, '\n')
+		if (indentOnNewLine) {
+			strings.write_rune(builder, '\t')
+		}
+	}
+
+	if (raylib.IsKeyPressed(raylib.KeyboardKey.TAB)) {
+		strings.write_rune(builder, '\t')
 	}
 
 	isCtrlPressed: bool =
@@ -58,27 +87,64 @@ TextHandleInput :: proc(builder: ^strings.Builder) {
 	}
 }
 
+DrawCursorTextBox :: proc(elementData: clay.ElementData, info: ^TextBoxInfo) {
+	if (!elementData.found || math.mod_f64(raylib.GetTime(), 1.0) < 0.5) {
+		return
+	}
+	textCStr: cstring = strings.to_cstring(&info.textBuilder)
+	textScale := raylib.MeasureTextEx(Utils.g_fonts[0], textCStr, cast(f32)info.fontSize, 0)
+	factor: f32 = len(textCStr) > 0 ? 1.0 : 0.0
+	raylib.DrawRectangle(
+		cast(i32)(elementData.boundingBox.x + textScale.x),
+		cast(i32)(elementData.boundingBox.y + textScale.y - (cast(f32)info.fontSize * factor)),
+		10,
+		cast(i32)info.fontSize,
+		{
+			u8(info.cursorColor.r),
+			u8(info.cursorColor.g),
+			u8(info.cursorColor.b),
+			u8(info.cursorColor.a),
+		},
+	)
+}
+
 TextBox :: proc(id: clay.ElementId, info: ^TextBoxInfo) {
 	if (info.isFocused) {
-		TextHandleInput(&info.textBuilder)
+		TextHandleInput(&info.textBuilder, info.indentOnNewLine)
+		currElementData: clay.ElementData = clay.GetElementData(id)
+		DrawCursorTextBox(currElementData, info)
 	}
+	info.outWasClicked = false
 
 	textBoxLayout := clay.LayoutConfig {
 		layoutDirection = clay.LayoutDirection.LeftToRight,
 		sizing          = info.sizing,
 	}
 	text: string = strings.to_string(info.textBuilder)
-	if clay.UI(id)({layout = textBoxLayout}) {
+	textContainerId: clay.ElementId
+	if clay.UI(id)(
+	{
+		layout = textBoxLayout,
+		border = {width = clay.BorderAll(info.borderWidth), color = info.borderColor},
+	},
+	) {
+		if (clay.Hovered() && raylib.IsMouseButtonPressed(raylib.MouseButton.LEFT)) {
+			info.outWasClicked = true
+		}
 		count := len(text)
 		info.outIsPlaceholder = count <= 0
-		// sendReqButton.disable = count <= 0
-		currentUriText: string = !info.outIsPlaceholder ? text : info.placeholderText
+		currentText: string = !info.outIsPlaceholder ? text : info.placeholderText
 		textColor := count > 0 ? Utils.COLOR_WHITE() : Utils.COLOR_WHITE(100)
-		clay.TextDynamic(
-			currentUriText,
-			clay.TextConfig(Utils.TextDefault(info.fontSize, textColor)),
-		)
+		textContainerId = clay.ID_LOCAL("_container")
+		if (clay.UI(textContainerId)({layout = {sizing = {width = clay.SizingFit()}}})) {
+			clay.TextDynamic(
+				currentText,
+				clay.TextConfig(Utils.TextDefault(info.fontSize, textColor)),
+			)
+		}
 	}
+	// fmt.println(currElementData.boundingBox)
+	// currElementData.boundingBox
 
 }
 

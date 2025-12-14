@@ -9,7 +9,6 @@ import "vendor:raylib"
 
 windowWidth: i32 = 1024
 windowHeight: i32 = 768
-fonts: [10]raylib.Font
 
 ErrorHandler :: proc "c" (errorData: clay.ErrorData) {
 	context = runtime.default_context()
@@ -17,9 +16,14 @@ ErrorHandler :: proc "c" (errorData: clay.ErrorData) {
 }
 
 LoadResources :: proc() {
-	fonts[0] = raylib.LoadFontEx("assets/fonts/Nova_Square/NovaSquare-Regular.ttf", 72, nil, 0)
-	raylib.SetTextureFilter(fonts[0].texture, raylib.TextureFilter.POINT)
-	append(&raylib_fonts, Raylib_Font{fontId = 0, font = fonts[0]})
+	Utils.g_fonts[0] = raylib.LoadFontEx(
+		"assets/fonts/Nova_Square/NovaSquare-Regular.ttf",
+		72,
+		nil,
+		0,
+	)
+	raylib.SetTextureFilter(Utils.g_fonts[0].texture, raylib.TextureFilter.POINT)
+	append(&raylib_fonts, Raylib_Font{fontId = 0, font = Utils.g_fonts[0]})
 }
 
 Init :: proc() {
@@ -32,7 +36,7 @@ Init :: proc() {
 		{cast(f32)raylib.GetScreenWidth(), cast(f32)raylib.GetScreenHeight()},
 		{handler = ErrorHandler},
 	)
-	clay.SetMeasureTextFunction(measure_text, &fonts[0])
+	clay.SetMeasureTextFunction(measure_text, &Utils.g_fonts[0])
 
 	raylib.SetTraceLogLevel(raylib.TraceLogLevel.ERROR)
 	raylib.SetConfigFlags({.VSYNC_HINT, .WINDOW_RESIZABLE, .MSAA_4X_HINT})

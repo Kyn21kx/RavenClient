@@ -9,7 +9,12 @@ import "core:time"
 // 5 MB may be way too low, but it's for testing
 BODY_CAPACITY :: 1024 * 1024 * 5
 
-ResponseState :: struct {
+UIFocus :: enum {
+	URLBox,
+	BodyBox,
+}
+
+AppState :: struct {
 	responseStatusColor:     clay.Color,
 	statusCode:              http.Status,
 	bodyBuffer:              strings.Builder,
@@ -17,9 +22,10 @@ ResponseState :: struct {
 	currentMethod:           http.Method,
 	currentBody:             [BODY_CAPACITY]byte,
 	responseBodySize:        i32,
+	uiFocusState:            UIFocus,
 }
 
-InitResponseState :: proc(responseState: ^ResponseState) {
+InitResponseState :: proc(responseState: ^AppState) {
 	responseState.responseStatusColor = Utils.COLOR_BLACK()
 	strings.builder_init_len_cap(&responseState.bodyBuffer, 0, BODY_CAPACITY)
 }
