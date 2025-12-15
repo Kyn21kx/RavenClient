@@ -89,6 +89,8 @@ SendRequestWorker :: proc() {
 		for !requestHasWork {
 			sync.cond_wait(&requestCond, &requestMutex)
 		}
+		requestHasWork = false
+		sync.mutex_unlock(&requestMutex)
 		fmt.println("Sending request threaded")
 		request := httpclient.Request {
 			method  = appState.currentMethod,
@@ -107,10 +109,10 @@ SendRequestWorker :: proc() {
 		appState.lastResponseElapsedTime = time.since(startTime)
 		defer httpclient.response_destroy(&res)
 
-		if (err != nil) {
+if (err != nil) {
 			// Communicate the error to the user
 			fmt.printfln("Error when sending the request %d", err)
-			return
+			continue
 		}
 
 		// Update the Response box
@@ -124,13 +126,12 @@ SendRequestWorker :: proc() {
 		appState.statusCode = res.status
 		body, alloc, bodyErr := httpclient.response_body(&res)
 		defer httpclient.body_destroy(body, alloc)
-		if (bodyErr != nil) {
-			return
+if (bodyErr != nil) {
+			continue
 		}
 
-		appState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
+appState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
 		strings.write_string(&appState.bodyBuffer, body.(httpclient.Body_Plain))
-		requestHasWork = false
 	}
 }
 
@@ -148,6 +149,7 @@ OnSendRequestButtonClick :: proc "c" (
 	if (requestThread == nil) {
 		requestThread = thread.create_and_start(SendRequestWorker)
 	}
+	sync.mutex_lock(&requestMutex)
 	requestHasWork = true
 	sync.cond_signal(&requestCond)
 	sync.mutex_unlock(&requestMutex)
