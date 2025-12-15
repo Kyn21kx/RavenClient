@@ -397,8 +397,8 @@ DrawRightPanel :: proc() {
 		) {
 			if (copiedTextTimer > 0) {
 				copiedTextTimer -= raylib.GetFrameTime()
-				copyBtnArgs.bgIdleColor = Utils.COLOR_CYAN()
-				copyBtnArgs.bgHoverColor = Utils.COLOR_CYAN(100)
+				// copyBtnArgs.bgIdleColor = Utils.COLOR_SILVER()
+				// copyBtnArgs.bgHoverColor = Utils.COLOR_SILVER(100)
 				Components.RawButton("Copied!", copyBtnArgs)
 			} else {
 				Components.RawButton("Copy Body", copyBtnArgs)
