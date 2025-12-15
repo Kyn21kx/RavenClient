@@ -27,6 +27,7 @@ TITLE_CONFIG: clay.TextElementConfig = {
 SIZE_AUTO_GROW_XY: clay.Sizing
 EXAMPLE_URI :: "https://example.com/api/endpoint"
 EXAMPLE_BODY :: "{\n\t\"body\":\"example body as JSON\"\n}"
+COPIED_TEXT_TIME :: 1
 
 globalCtx: runtime.Context
 
@@ -40,6 +41,8 @@ requestHasWork: bool = false
 requestMutex: sync.Mutex
 requestCond: sync.Cond
 appState: AppState
+blendColorTimer: f32 = 0
+copiedTextTimer: f32 = 0
 
 buttonColors: [5]clay.Color = {
 	Utils.COLOR_PURPLE(),
@@ -54,6 +57,10 @@ buttonNames: []string = {"GET", "POST", "DELETE", "PATCH", "PUT"}
 ButtonType :: enum {
 	SendRequest,
 	ChangeRequestMethod,
+}
+
+ActiveMethodColor :: proc() -> clay.Color {
+	return buttonColors[cast(i32)appState.currentMethod]
 }
 
 Init :: proc() {
@@ -78,7 +85,7 @@ Init :: proc() {
 	requestBodyTextBoxInfo.indentOnNewLine = true
 
 	urlTextBoxInfo.cursorColor = buttonColors[cast(i32)appState.currentMethod]
-	requestBodyTextBoxInfo.cursorColor = buttonColors[cast(i32)appState.currentMethod]
+	requestBodyTextBoxInfo.cursorColor = ActiveMethodColor()
 
 	globalCtx = runtime.default_context()
 }
@@ -91,7 +98,6 @@ SendRequestWorker :: proc() {
 		}
 		requestHasWork = false
 		sync.mutex_unlock(&requestMutex)
-		fmt.println("Sending request threaded")
 		request := httpclient.Request {
 			method  = appState.currentMethod,
 			headers = {},
@@ -104,12 +110,14 @@ SendRequestWorker :: proc() {
 		}
 
 		defer httpclient.request_destroy(&request)
+		appState.isRequestInProgress = true
 		startTime: time.Time = time.now()
 		res, err := httpclient.request(&request, strings.to_string(urlTextBoxInfo.textBuilder))
 		appState.lastResponseElapsedTime = time.since(startTime)
+		appState.isRequestInProgress = false
 		defer httpclient.response_destroy(&res)
 
-if (err != nil) {
+		if (err != nil) {
 			// Communicate the error to the user
 			fmt.printfln("Error when sending the request %d", err)
 			continue
@@ -126,11 +134,11 @@ if (err != nil) {
 		appState.statusCode = res.status
 		body, alloc, bodyErr := httpclient.response_body(&res)
 		defer httpclient.body_destroy(body, alloc)
-if (bodyErr != nil) {
+		if (bodyErr != nil) {
 			continue
 		}
 
-appState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
+		appState.responseBodySize = cast(i32)len(body.(httpclient.Body_Plain))
 		strings.write_string(&appState.bodyBuffer, body.(httpclient.Body_Plain))
 	}
 }
@@ -145,6 +153,7 @@ OnSendRequestButtonClick :: proc "c" (
 	}
 	context = globalCtx
 
+	blendColorTimer = 0
 	clear(&appState.bodyBuffer.buf)
 	if (requestThread == nil) {
 		requestThread = thread.create_and_start(SendRequestWorker)
@@ -153,6 +162,20 @@ OnSendRequestButtonClick :: proc "c" (
 	requestHasWork = true
 	sync.cond_signal(&requestCond)
 	sync.mutex_unlock(&requestMutex)
+}
+
+OnCopyBodyCLick :: proc "c" (
+	elementId: clay.ElementId,
+	pointerData: clay.PointerData,
+	userData: rawptr,
+) {
+	if (pointerData.state != clay.PointerDataInteractionState.PressedThisFrame) {
+		return
+	}
+
+	context = globalCtx
+	raylib.SetClipboardText(strings.to_cstring(&appState.bodyBuffer))
+	copiedTextTimer = COPIED_TEXT_TIME
 }
 
 OnMethodButtonClick :: proc "c" (
@@ -206,6 +229,7 @@ DrawTopHeader :: proc() {
 
 	sendReqButton := Components.ButtonArgs {
 		fontSize     = 24,
+		padding      = 24,
 		cornerRadius = 5,
 		onHover      = OnSendRequestButtonClick,
 		bgIdleColor  = Utils.COLOR_INDIGO(200),
@@ -238,37 +262,44 @@ DrawTopHeader :: proc() {
 		if (urlTextBoxInfo.outWasClicked) {
 			appState.uiFocusState = UIFocus.URLBox
 		}
-		sendReqButton.disable = urlTextBoxInfo.outIsPlaceholder
+		sendReqButton.disable = urlTextBoxInfo.outIsPlaceholder || appState.isRequestInProgress
 		Components.HeaderButton("Send Request", &sendReqButton)
 	}
 }
 
-DrawRightPanel :: proc() {
-	panelElement := clay.ElementDeclaration {
-		layout = {
-			sizing = {width = clay.SizingGrow({min = 1}), height = clay.SizingPercent(1)},
-			layoutDirection = clay.LayoutDirection.TopToBottom,
-			padding = clay.PaddingAll(DEFAULT_PADDING),
-			childGap = 48,
+DrawLoadingCircle :: proc(containerId: clay.ElementId) {
+	boundingBox := clay.GetElementData(containerId).boundingBox
+	delta: f32 = raylib.GetFrameTime()
+	blendColorTimer += delta
+	newAlpha := Utils.Lerpf(255, 0, blendColorTimer)
+	loadingCircleColor := ActiveMethodColor()
+	loadingCircleColor.a = newAlpha
+	LOADING_RADIUS :: 100.0
+	raylib.DrawCircleGradient(
+		cast(i32)(boundingBox.x + boundingBox.width * 0.5),
+		cast(i32)(boundingBox.y + (boundingBox.height * 0.5)),
+		LOADING_RADIUS,
+		{
+			u8(Utils.COLOR_TRANSPARENT.r),
+			u8(Utils.COLOR_TRANSPARENT.g),
+			u8(Utils.COLOR_TRANSPARENT.b),
+			u8(Utils.COLOR_TRANSPARENT.a),
 		},
-	}
+		{
+			u8(loadingCircleColor.r),
+			u8(loadingCircleColor.g),
+			u8(loadingCircleColor.b),
+			u8(loadingCircleColor.a),
+		},
+	)
+}
+
+DrawStatusButtons :: proc() {
 	statusButton := clay.ElementDeclaration {
 		layout = {childAlignment = Utils.LAYOUT_CHILD_ALIGN_CENTER_ALL},
 		cornerRadius = clay.CornerRadiusAll(2),
-		border = {width = clay.BorderAll(2), color = appState.responseStatusColor},
+		border = {width = clay.BorderOutside(2), color = appState.responseStatusColor},
 		backgroundColor = appState.responseStatusColor,
-	}
-
-
-	mouseScroll := clay.Vector2{raylib.GetMouseWheelMoveV().x, raylib.GetMouseWheelMoveV().y}
-	// This one doesn't work, idk why
-
-	bodyViewLayout := clay.LayoutConfig {
-		sizing = {width = clay.SizingGrow({}), height = clay.SizingPercent(1)},
-	}
-	bodyViewBorder := clay.BorderElementConfig {
-		width = clay.BorderAll(2),
-		color = Utils.COLOR_BLACK(),
 	}
 
 	// TODO: provide contextual allocator for stack memory
@@ -288,45 +319,94 @@ DrawRightPanel :: proc() {
 	defer delete_string(str)
 	defer delete_string(sizeStr)
 
-	if clay.UI(clay.ID("RightCenterPanel"))(panelElement) {
-		if clay.UI()(
-		{layout = {layoutDirection = clay.LayoutDirection.LeftToRight, childGap = 12}},
-		) {
-			if clay.UI()(statusButton) {
-				clay.TextDynamic(
-					str,
-					clay.TextConfig(
-						Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
-					),
-				)
-			}
-			statusButton.backgroundColor = Utils.COLOR_GRAY()
-			statusButton.border.color = Utils.COLOR_GRAY()
-			if clay.UI()(statusButton) {
-				clay.TextDynamic(
-					elapsedStr,
-					clay.TextConfig(
-						Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
-					),
-				)
-			}
-			if clay.UI()(statusButton) {
-				clay.TextDynamic(
-					sizeStr,
-					clay.TextConfig(
-						Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
-					),
-				)
-			}
-
+	if clay.UI()({layout = {layoutDirection = clay.LayoutDirection.LeftToRight, childGap = 12}}) {
+		if clay.UI()(statusButton) {
+			clay.TextDynamic(
+				str,
+				clay.TextConfig(
+					Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
+				),
+			)
 		}
-		if clay.UI()(
+		statusButton.backgroundColor = Utils.COLOR_GRAY()
+		statusButton.border.color = Utils.COLOR_GRAY()
+		if clay.UI()(statusButton) {
+			clay.TextDynamic(
+				elapsedStr,
+				clay.TextConfig(
+					Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
+				),
+			)
+		}
+		if clay.UI()(statusButton) {
+			clay.TextDynamic(
+				sizeStr,
+				clay.TextConfig(
+					Utils.TextDefault(24, Utils.COLOR_WHITE(), clay.TextAlignment.Center),
+				),
+			)
+		}
+
+	}
+
+}
+
+DrawRightPanel :: proc() {
+	panelElement := clay.ElementDeclaration {
+		layout = {
+			sizing = {width = clay.SizingGrow({min = 1}), height = clay.SizingPercent(1)},
+			layoutDirection = clay.LayoutDirection.TopToBottom,
+			padding = clay.PaddingAll(DEFAULT_PADDING),
+			childGap = 48,
+		},
+	}
+
+	bodyViewLayout := clay.LayoutConfig {
+		sizing = {width = clay.SizingGrow({}), height = clay.SizingPercent(1)},
+		layoutDirection = clay.LayoutDirection.TopToBottom,
+		childGap = 24,
+	}
+	bodyViewBorder := clay.BorderElementConfig {
+		width = clay.BorderOutside(2),
+		color = Utils.COLOR_BLACK(),
+	}
+
+	copyBtnArgs := Components.ButtonArgs {
+		fontSize = 24,
+		padding = 8,
+		cornerRadius = 5,
+		bgIdleColor = Utils.COLOR_INDIGO(),
+		bgHoverColor = Utils.COLOR_INDIGO(100),
+		fgIdleColor = Utils.COLOR_WHITE(),
+		fgHoverColor = Utils.COLOR_WHITE(100),
+		borderColor = Utils.COLOR_INDIGO(),
+		onHover = OnCopyBodyCLick,
+		disable = len(strings.to_string(appState.bodyBuffer)) <= 0,
+		sizing = {width = clay.SizingFit(), height = clay.SizingFit()},
+	}
+
+	if clay.UI(clay.ID("RightCenterPanel"))(panelElement) {
+		DrawStatusButtons()
+		bodyViewId := clay.ID("BodyView")
+		if clay.UI(bodyViewId)(
 		{
 			layout = bodyViewLayout,
 			border = bodyViewBorder,
 			clip = {vertical = true, childOffset = clay.GetScrollOffset()},
 		},
 		) {
+			if (copiedTextTimer > 0) {
+				copiedTextTimer -= raylib.GetFrameTime()
+				copyBtnArgs.bgIdleColor = Utils.COLOR_CYAN()
+				copyBtnArgs.bgHoverColor = Utils.COLOR_CYAN(100)
+				Components.RawButton("Copied!", copyBtnArgs)
+			} else {
+				Components.RawButton("Copy Body", copyBtnArgs)
+			}
+
+			if appState.isRequestInProgress {
+				DrawLoadingCircle(bodyViewId)
+			}
 			clay.TextDynamic(
 				strings.to_string(appState.bodyBuffer),
 				clay.TextConfig(Utils.TextDefault(24)),
@@ -361,7 +441,7 @@ DrawUI :: proc() {
 
 	centerPanelElement := clay.ElementDeclaration {
 		layout = centerPanelLayout,
-		border = {width = clay.BorderAll(2), color = Utils.COLOR_BLACK()},
+		border = {width = clay.BorderOutside(2), color = Utils.COLOR_BLACK()},
 	}
 
 	DrawTopHeader()

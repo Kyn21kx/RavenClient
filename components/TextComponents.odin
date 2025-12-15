@@ -125,7 +125,7 @@ TextBox :: proc(id: clay.ElementId, info: ^TextBoxInfo) {
 	if clay.UI(id)(
 	{
 		layout = textBoxLayout,
-		border = {width = clay.BorderAll(info.borderWidth), color = info.borderColor},
+		border = {width = clay.BorderOutside(info.borderWidth), color = info.borderColor},
 	},
 	) {
 		if (clay.Hovered() && raylib.IsMouseButtonPressed(raylib.MouseButton.LEFT)) {
@@ -166,6 +166,8 @@ ButtonArgs :: struct {
 	fgIdleColor:  clay.Color,
 	fgHoverColor: clay.Color,
 	borderColor:  clay.Color,
+	sizing:       clay.Sizing,
+	padding:      u16,
 }
 
 
@@ -173,6 +175,7 @@ ButtonArgs :: struct {
 DefaultButtonArgs :: proc() -> ButtonArgs {
 	return ButtonArgs {
 		fontSize = 24,
+		padding = 24,
 		active = false,
 		disable = false,
 		onHover = nil,
@@ -193,8 +196,8 @@ RawButton :: proc(buttonText: string, args: ButtonArgs, outIsHovered: ^bool = ni
 	fg := args.fgIdleColor
 
 	buttonLayout := clay.LayoutConfig {
-		padding = clay.PaddingAll(args.fontSize),
-		sizing = {width = {type = clay.SizingType.Grow}, height = {type = clay.SizingType.Fit}},
+		padding        = clay.PaddingAll(args.padding),
+		sizing         = args.sizing,
 		childAlignment = Utils.LAYOUT_CHILD_ALIGN_CENTER_ALL,
 	}
 

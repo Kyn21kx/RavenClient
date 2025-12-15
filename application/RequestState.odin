@@ -23,6 +23,7 @@ AppState :: struct {
 	currentBody:             [BODY_CAPACITY]byte,
 	responseBodySize:        i32,
 	uiFocusState:            UIFocus,
+	isRequestInProgress:     bool,
 }
 
 InitResponseState :: proc(responseState: ^AppState) {

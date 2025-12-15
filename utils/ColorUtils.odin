@@ -2,6 +2,9 @@ package utils
 
 import "../third_party/clay"
 
+Lerpf :: proc(from: f32, to: f32, t: f32) -> f32 {
+	return from * (1 - t) + to * t
+}
 
 // Helper function to create clay colors with optional opacity
 make_clay_color :: proc "contextless" (r, g, b: f32, a: f32 = 255) -> clay.Color {
