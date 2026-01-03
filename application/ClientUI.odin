@@ -28,9 +28,13 @@ SIZE_AUTO_GROW_XY: clay.Sizing
 EXAMPLE_URI :: "https://example.com/api/endpoint"
 EXAMPLE_BODY :: "{\n\t\"body\":\"example body as JSON\"\n}"
 COPIED_TEXT_TIME :: 1
+MAP_CAPACITY :: 5 * 64 * 2 // 5 headers of 64 chars each times key and value (2)
+SMALL_STRING_BUFFER_LENGTH :: 64 * 10 // 10 small 32 byte strings throughout the entire app (kinda like our own stack bc somehow clay does not like to render from stack allocated buffers???)
 
 globalCtx: runtime.Context
 
+smallStringArena: Arena
+smallStringsBuffer: [SMALL_STRING_BUFFER_LENGTH]byte
 urlBuffer: [URL_MAX_LEN]byte
 showOtherMethods: bool = false
 urlTextBoxInfo: Components.TextBoxInfo
@@ -65,6 +69,7 @@ ActiveMethodColor :: proc() -> clay.Color {
 
 Init :: proc() {
 	InitResponseState(&appState)
+	smallStringArena = ArenaFromBuffer(smallStringsBuffer[:])
 	urlTextBoxInfo = Components.DefaultTextBoxInfoWithBuffer(urlBuffer[:], EXAMPLE_URI)
 	urlTextBoxInfo.sizing = {
 		width = clay.SizingGrow(),
@@ -86,6 +91,8 @@ Init :: proc() {
 
 	urlTextBoxInfo.cursorColor = buttonColors[cast(i32)appState.currentMethod]
 	requestBodyTextBoxInfo.cursorColor = ActiveMethodColor()
+	a: map[string]string
+	reserve_map(&appState.headers._kv, MAP_CAPACITY)
 
 	globalCtx = runtime.default_context()
 }
@@ -303,21 +310,39 @@ DrawStatusButtons :: proc() {
 	}
 
 	// TODO: provide contextual allocator for stack memory
-	str := fmt.aprintf("Response: %d", appState.statusCode)
-	elapsedStr := fmt.aprintf("Roundtrip: %v", appState.lastResponseElapsedTime)
+	respStrBuffer: []byte
+	elapsedStrBuffer: []byte
+	sizeStrBuffer: []byte
+
+	buffSize :: 32
+
+	ArenaPushArray(&smallStringArena, buffSize, &respStrBuffer)
+	ArenaPushArray(&smallStringArena, buffSize, &elapsedStrBuffer)
+	ArenaPushArray(&smallStringArena, buffSize, &sizeStrBuffer)
+	defer ArenaPop(&smallStringArena, buffSize)
+	defer ArenaPop(&smallStringArena, buffSize)
+	defer ArenaPop(&smallStringArena, buffSize)
+
+	str := fmt.bprintf(respStrBuffer, "Response: %d", appState.statusCode)
+	elapsedStr := fmt.bprintf(elapsedStrBuffer, "Roundtrip: %v", appState.lastResponseElapsedTime)
 	sizeStr: string
 	// We can probably do this in a smarter way, but I've been coding for a while now lol
 	if (appState.responseBodySize < SIZE_KB) {
-		sizeStr = fmt.aprintf("Content Size: %vB", appState.responseBodySize)
+		sizeStr = fmt.bprintf(sizeStrBuffer, "Content Size: %vB", appState.responseBodySize)
 	} else if (appState.responseBodySize < SIZE_MB) {
-		sizeStr = fmt.aprintf("Content Size: %vkB", cast(f32)appState.responseBodySize / SIZE_KB)
+		sizeStr = fmt.bprintf(
+			sizeStrBuffer,
+			"Content Size: %vkB",
+			cast(f32)appState.responseBodySize / SIZE_KB,
+		)
 	} else {
-		sizeStr = fmt.aprintf("Content Size: %MB", appState.responseBodySize / SIZE_MB)
+		sizeStr = fmt.bprintf(
+			sizeStrBuffer,
+			"Content Size: %MB",
+			appState.responseBodySize / SIZE_MB,
+		)
 
 	}
-	defer delete_string(elapsedStr)
-	defer delete_string(str)
-	defer delete_string(sizeStr)
 
 	if clay.UI()({layout = {layoutDirection = clay.LayoutDirection.LeftToRight, childGap = 12}}) {
 		if clay.UI()(statusButton) {
@@ -416,14 +441,104 @@ DrawRightPanel :: proc() {
 	}
 }
 
+OnAddRequestHeaderClick :: proc "c" (
+	elementId: clay.ElementId,
+	pointerData: clay.PointerData,
+	userData: rawptr,
+) {
+	if (pointerData.state != clay.PointerDataInteractionState.PressedThisFrame) {
+		return
+	}
+	context = globalCtx
+	map_insert(&appState.headers._kv, "", "")
+}
+
+OnRemoveRequestHeaderClick :: proc "c" (
+	elementId: clay.ElementId,
+	pointerData: clay.PointerData,
+	userData: rawptr,
+) {
+	if (pointerData.state != clay.PointerDataInteractionState.PressedThisFrame) {
+		return
+	}
+}
+
+
 DrawLeftPanel :: proc() {
 	leftPanelLayout := clay.LayoutConfig {
 		layoutDirection = clay.LayoutDirection.TopToBottom,
 		sizing = {width = clay.SizingPercent(0.3)},
+		childGap = 24,
+	}
+
+	addHeaderBtn := Components.DefaultButtonArgs()
+	addHeaderBtn.fontSize = TITLE_CONFIG.fontSize
+	addHeaderBtn.padding = 5
+	addHeaderBtn.fgIdleColor = Utils.COLOR_WHITE()
+	addHeaderBtn.fgHoverColor = Utils.COLOR_WHITE(100)
+	addHeaderBtn.bgIdleColor = Utils.COLOR_INDIGO()
+	addHeaderBtn.bgHoverColor = Utils.COLOR_INDIGO(100)
+	addHeaderBtn.borderColor = Utils.COLOR_INDIGO()
+	addHeaderBtn.cornerRadius = 5
+	addHeaderBtn.onHover = OnAddRequestHeaderClick
+	addHeaderBtn.sizing = {
+		width  = clay.SizingFit(),
+		height = clay.SizingFit(),
+	}
+
+	headerTextBoxArgs := Components.TextBoxInfo {
+		placeholderColor = Utils.COLOR_WHITE(100),
+		textColor = Utils.COLOR_WHITE(),
+		borderColor = Utils.COLOR_LIGHT_GRAY(),
+		borderWidth = 2,
+		fontSize = TITLE_CONFIG.fontSize,
+		sizing = {width = clay.SizingPercent(1), height = clay.SizingGrow()},
 	}
 
 	if clay.UI(clay.ID("LeftCenterPanel"))({layout = leftPanelLayout}) {
-		clay.Text("Request Headers", clay.TextConfig(TITLE_CONFIG))
+		if clay.UI(clay.ID("ReqHeadersHeader"))(
+		{layout = {layoutDirection = clay.LayoutDirection.LeftToRight, childGap = 24}},
+		) {
+			clay.Text("Request Headers", clay.TextConfig(TITLE_CONFIG))
+			Components.RawButton("[+]", addHeaderBtn)
+			removeHeaderBtn := addHeaderBtn
+			headerCount := len(appState.headers._kv)
+			removeHeaderBtn.disable = headerCount <= 0
+			Components.RawButton("[-]", removeHeaderBtn)
+		}
+		if clay.UI(clay.ID("Headers"))(
+		{layout = {layoutDirection = clay.LayoutDirection.TopToBottom}},
+		) {
+			idx: u32 = 0
+			for headerKey, headerValue in appState.headers._kv {
+				if clay.UI(clay.ID_LOCAL("_Header", idx))(
+				{
+					layout = {
+						layoutDirection = clay.LayoutDirection.LeftToRight,
+						sizing = Utils.SizeFlexHorizontal(1),
+						childGap = 24,
+					},
+				},
+				) {
+					bufLength :: 32
+					bufferView: []byte
+					ArenaPushArray(&smallStringArena, bufLength, &bufferView)
+					defer ArenaPop(&smallStringArena, bufLength)
+
+					builder := strings.builder_from_bytes(bufferView[:])
+
+					strings.write_string(&builder, "Header #")
+					strings.write_uint(&builder, cast(uint)idx + 1)
+					clay.TextDynamic(strings.to_string(builder), &TITLE_CONFIG)
+					headerTextBoxArgs.placeholderText = "Key"
+					Components.TextBox(clay.ID_LOCAL("Header_Key", idx), &headerTextBoxArgs)
+					valueArgs := headerTextBoxArgs
+					valueArgs.placeholderText = "Value"
+					Components.TextBox(clay.ID_LOCAL("Header_Value", idx), &valueArgs)
+				}
+				idx += 1
+			}
+		}
 		clay.Text("Body (JSON only)", clay.TextConfig(TITLE_CONFIG))
 		Components.TextBox(clay.ID("RequestBody"), &requestBodyTextBoxInfo)
 		if (requestBodyTextBoxInfo.outWasClicked) {

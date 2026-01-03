@@ -135,7 +135,9 @@ TextBox :: proc(id: clay.ElementId, info: ^TextBoxInfo) {
 		info.outIsPlaceholder = count <= 0
 		currentText: string = !info.outIsPlaceholder ? text : info.placeholderText
 		textColor := count > 0 ? Utils.COLOR_WHITE() : Utils.COLOR_WHITE(100)
-		textContainerId = clay.ID_LOCAL("_container")
+		buffer: [64]byte
+		concatenatedId: string = fmt.bprintf(buffer[:], "%v_container", id.id)
+		textContainerId = clay.ID_LOCAL(concatenatedId)
 		if (clay.UI(textContainerId)({layout = {sizing = {width = clay.SizingFit()}}})) {
 			clay.TextDynamic(
 				currentText,
@@ -180,6 +182,7 @@ DefaultButtonArgs :: proc() -> ButtonArgs {
 		disable = false,
 		onHover = nil,
 		callbackArgs = nil,
+		sizing = {width = clay.SizingGrow()},
 		bgIdleColor = Utils.COLOR_TRANSPARENT,
 		bgHoverColor = Utils.COLOR_TRANSPARENT,
 		fgIdleColor = Utils.COLOR_LIGHT_GRAY(),

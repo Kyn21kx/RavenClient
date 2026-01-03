@@ -23,7 +23,9 @@ AppState :: struct {
 	currentBody:             [BODY_CAPACITY]byte,
 	responseBodySize:        i32,
 	uiFocusState:            UIFocus,
+	headerKVFocusIdx:        u32,
 	isRequestInProgress:     bool,
+	headers:                 http.Headers,
 }
 
 InitResponseState :: proc(responseState: ^AppState) {

@@ -1,11 +1,15 @@
 // raddbg 0.9.19 project file
 
 recent_file: path: "application/ClientUI.odin"
+recent_file: path: "components/textcomponents.odin"
+recent_file: path: "third_party/clay/clay.odin"
 recent_file: path: "main.odin"
+recent_file: path: "../../tools/odinwin/dist/base/runtime/core.odin"
+recent_file: path: "../../tools/odinwin/dist/base/runtime/default_temporary_allocator.odin"
 recent_file: path: "clayrendererraylib.odin"
 target:
 {
-  executable: "OdinClient.exe"
+  executable: "RavenClient.exe"
   working_directory: ""
   enabled: 1
 }
